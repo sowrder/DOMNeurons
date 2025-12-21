@@ -214,27 +214,6 @@ python -m pytest tests/test_neuron.py -v
 python -m pytest --cov=src tests/
 ```
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-- Follow mathematical specifications in PDF documentation
-- Maintain eigen update sequences
-- Preserve void handling integrity
-- Add tests for new features
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 📬 Contact
-
-For questions about the mathematical framework or implementation:
 
 - **GitHub Issues**: [Report bugs or request features](https://github.com/yourusername/DOMNeurons/issues)
 - **Documentation**: See [`paper.pdf`](paper.pdf) for complete mathematical details
