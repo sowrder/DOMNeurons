@@ -1,5 +1,3 @@
-Here's a clean, properly formatted README that will render correctly on GitHub:
-
 ```markdown
 # DOMNeurons: Autonomous DOM Neural Unit
 
