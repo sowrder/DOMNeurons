@@ -75,7 +75,6 @@ if it is, then we check if our pattern has the highest liklihood using b*
 if it does, we continue updating B*_j, else we switch to another pattern and update it's B 
 
 
-NOTE -- This is slightly outdated, we now include a Tensor eigen decomposition, and a membrane void system for information loss rerouting 
 """
 
 
@@ -2141,6 +2140,11 @@ class VoidSystem:
 
 
 class Neuron:
+    
+    pattern_names = ["DATA_INPUT", "ACTION_ELEMENT", "CONTEXT_ELEMENT", 
+                        "STRUCTURAL", "UNKNOWN"]
+    position_names = ["self", "parent", "up", "down", "left", "right"]
+        
     """
     Autonomous DOM Neural Unit - COMPLETE IMPLEMENTATION
     Extracts everything once, uses for all operations with proper logging
@@ -2152,13 +2156,42 @@ class Neuron:
             self.id = self._generate_id()
             self.dom_driver = dom_driver
             self.axon_network = axon_network
+            
+            # FIX: Set current_pattern BEFORE calling axon_network.register_neuron
+            self.current_pattern = priori_pattern  
+            self.current_pattern_idx = self._get_pattern_idx(priori_pattern)
+            
+            # Now register with axon_network
+            self.axon_network.register_neuron(self)
+            
             self.learning_mode = "Normal" 
             # ===== PHASE 0: ONE-TIME EXTRACTION =====
             print(f"🧠 Neuron {self.id} initializing at {coordinate} as {priori_pattern}")
             
+
             # Create ROSE for dictionary definitions (ONCE)
             self.rose = ROSE(initial_pattern=priori_pattern, coordinate=coordinate)
-            self.pattern_idx = None 
+            
+            #extraction parameters 
+            self.position_names = ["self", "parent", "up", "down", "left", "right"]
+            self.neighbor_positions = ["parent", "up", "down", "left", "right"]
+            
+            # ULTIMATE FALLBACK - Rank 3 tensor Permutation X Identity X Position X relational space 
+            
+    
+            # ADD UNKNOWN ENHANCEMENT FIELDS:
+            self.unknown_perm_cache = {
+                't_gamma_tensor': None,           # 5×5×87 base tensor
+                'initial_bias_updated': False,
+                'b_matrix_updated': False,    # T_gamma applied flag
+                'cycle_history': []  # Track eigen update sequence
+            }
+            
+            # UNKNOWN-specific eigen storage
+            self.eigen_gamma = None          # γ from T_gamma
+            self.eigen_gamma_v = None        # v_γ from T_gamma 
+            self.eigen_zeta = None           # ζ from tensor fallback
+            
             # Extract EVERYTHING once
             self._extract_all_expectations_once()
             
@@ -2168,8 +2201,6 @@ class Neuron:
             self.membrane_active = False  # Currently waiting for membrane processing
             self.stalled = False #wait for reroute coordinate 
 
-            # Initialize current pattern
-            
             # Initialize matrices from extracted data
             self._initialize_matrices_from_extracted_data()
             self.T_exp = self._init_T_exp()
@@ -2199,8 +2230,6 @@ class Neuron:
             self.processing_phase = "INITIAL"
             self.cycle_count = 0
             self.confidence_score = 0.0
-            self.position_names = ["self", "parent", "up", "down", "left", "right"]
-            self.neighbor_positions = ["parent", "up", "down", "left", "right"]
             
             # Recycling tracking
             self.recycling_iteration = 0
@@ -2223,10 +2252,44 @@ class Neuron:
             # Fire creation axon
             self._fire_creation_axon()
             print(f"  ✓ Neuron initialized with exact flow specification")
+
+
+    # Utility reverse transform  
+    def _dom_state_to_observation_vector_with_dict(self, dom_state: Dict, 
+                                              expectation_dict: Dict[EnhancedGrandClass, AttributeExpression]) -> np.ndarray:
+        """
+        Convert DOM state to 25D vector using provided expectation dictionary
+        """
+        vector = np.zeros(25)
         
+        if not dom_state.get('exists', False):
+            return vector
         
+        # Convert DOM attributes to our vocabulary
+        our_attributes = self._dom_to_our_vocabulary(dom_state)
         
+        # Evaluate each dimension
+        all_dimensions = EnhancedGrandClass.get_all_dimensions()
+        for i, dimension in enumerate(all_dimensions):
+            if dimension in expectation_dict:
+                expr = expectation_dict[dimension]
+                observed_attrs = our_attributes.get(dimension, set())
+                vector[i] = expr.evaluate(observed_attrs)
+        
+        return vector 
+            
     # ===== Binary attribute relational transformation space =====
+
+    def generate_permutation_matrix(self, m: int, k: int) -> np.ndarray:
+        """
+        Generate 5×5 permutation matrix for P_(m,k)[M(i)] = V[(m*i + k) MOD 5] #ignore -1 for starting position choice 
+        """
+        perm_matrix = np.zeros((5, 5), dtype=np.float32)
+        for i in range(5):
+            target_idx = (m * i + k) % 5
+            perm_matrix[target_idx, i] = 1.0
+        return perm_matrix
+        
 
     def T(self, vectors_array: np.ndarray) -> np.ndarray: 
         """
@@ -2302,30 +2365,73 @@ class Neuron:
         return output
 
 
-    #Tensor based method for mid-step transform to expand information 
+    #Tensor fallback array construction 
 
     def T_zeta(self) -> np.ndarray:
         """
-        Collect ALL observations and transform to 5x6x87 relational tensor:
-        1. Collect 5x6x25 observation tensor (5 patterns × 6 positions × 25D)
-        2. For each position, transform the 5 pattern vectors together with T()
-        3. Return 5x6x87 relational observation tensor
+        Collect ALL observations and transform to 5x6x87 relational tensor
+        WITH void/membrane rerouting support
         """
+        print("  🔧 Building T_zeta tensor with membrane awareness...")
+        
         # Step 1: Collect 5x6x25 observation tensor
         O_25d = np.zeros((5, 6, 25))
+        
+        # Process any pending voids first
+        if hasattr(self, 'membrane_waiting') and self.membrane_waiting:
+            if hasattr(self.axon_network, 'void_system'):
+                self.axon_network.void_system.process_voids()
         
         # For each pattern
         for pattern_idx, pattern_name in enumerate(self.pattern_names):
             # For each position (self + 5 neighbors)
             for pos_idx, position in enumerate(self.position_names):
-                # Get coordinate for this position
-                coord = self._get_coordinate_for_position(position)
-                if not coord:
+                # Skip self position for membrane checks (self doesn't get rerouted)
+                if position == "self":
+                    coord = self.coordinate
+                    use_reroute = False
+                else:
+                    # Get coordinate for this position
+                    coord = self._get_coordinate_for_position(position)
+                    use_reroute = True
+                
+                coord_to_observe = coord
+                
+                # ===== CHECK FOR MEMBRANE REROUTE (NEIGHBORS ONLY) =====
+                if use_reroute and hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+                    reroute_coord = self.membrane_reroutes[position]
+                    print(f"    🌀 T_zeta using reroute for {position}: {coord} → {reroute_coord}")
+                    coord_to_observe = reroute_coord
+                
+                # ===== CHECK IF WAITING FOR MEMBRANE =====
+                elif (use_reroute and hasattr(self, 'membrane_waiting') and 
+                    position in self.membrane_waiting):
+                    void_coord = self.membrane_waiting[position]
+                    if hasattr(self.axon_network, 'void_system'):
+                        reroute = self.axon_network.void_system.get_reroute(self.id, void_coord)
+                        if reroute and reroute['reroute_to']:
+                            # Reroute ready
+                            if not hasattr(self, 'membrane_reroutes'):
+                                self.membrane_reroutes = {}
+                            self.membrane_reroutes[position] = reroute['reroute_to']
+                            del self.membrane_waiting[position]
+                            coord_to_observe = reroute['reroute_to']
+                            print(f"    🌀 T_zeta got membrane reroute for {position}")
+                        else:
+                            # Still waiting
+                            O_25d[pattern_idx, pos_idx, :] = np.zeros(25)
+                            continue
+                    else:
+                        O_25d[pattern_idx, pos_idx, :] = np.zeros(25)
+                        continue
+                
+                if not coord_to_observe:
+                    O_25d[pattern_idx, pos_idx, :] = np.zeros(25)
                     continue
                     
                 try:
                     # Observe element using this pattern's expectations
-                    xpath = self._coord_to_xpath(coord)
+                    xpath = self._coord_to_xpath(coord_to_observe)
                     element = self.dom_driver.find_element(By.XPATH, xpath)
                     dom_state = self._observe_element(element)
                     
@@ -2338,9 +2444,40 @@ class Neuron:
                             expectation_row=None
                         )
                         O_25d[pattern_idx, pos_idx, :] = obs_vector
+                        
+                        # If this was a reroute, log successful observation
+                        if use_reroute and coord_to_observe != coord:
+                            print(f"    ✓ T_zeta successful reroute observation at {position}")
+                    else:
+                        # Void at observation coordinate
+                        if use_reroute and coord_to_observe != coord:
+                            # Reroute failed
+                            print(f"    🌀 T_zeta reroute failed at {position}")
+                            if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+                                del self.membrane_reroutes[position]
+                            
+                            # Register original as void
+                            if coord:
+                                self._handle_void(position, coord)
+                        
+                        O_25d[pattern_idx, pos_idx, :] = np.zeros(25)
+                        
                 except Exception as e:
-                    # Leave as zero vector if observation fails
-                    continue
+                    error_msg = str(e).lower()
+                    if "no such element" in error_msg or "stale" in error_msg:
+                        # Void detected
+                        if use_reroute:
+                            if coord_to_observe != coord:
+                                # Reroute failed
+                                print(f"    🌀 T_zeta reroute void at {position}")
+                                if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+                                    del self.membrane_reroutes[position]
+                            
+                            # Register original as void
+                            if coord:
+                                self._handle_void(position, coord)
+                    
+                    O_25d[pattern_idx, pos_idx, :] = np.zeros(25)
         
         # Step 2: Transform to 5x6x87 relational tensor
         self.T_obs = np.zeros((5, 6, 87))
@@ -2356,6 +2493,7 @@ class Neuron:
             # Store in tensor
             self.T_obs[:, pos_idx, :] = transformed
         
+        print(f"  ✓ T_zeta tensor built with membrane support: {self.T_obs.shape}")
         return self.T_obs
 
     #===== Public access statistical methods - target setup
@@ -2626,13 +2764,11 @@ class Neuron:
             self.T_exp[:, pos_idx, :] = transformed
         
         return self.T_exp
-        
+
     def _extract_all_expectations_once(self):
         """Extract ALL expectation data from ROSE once and store locally"""
-        pattern_names = ["DATA_INPUT", "ACTION_ELEMENT", "CONTEXT_ELEMENT", 
-                        "STRUCTURAL", "UNKNOWN"]
-        position_names = ["self", "parent", "up", "down", "left", "right"]
-        
+        pattern_names = Neuron.pattern_names 
+        position_names = Neuron.position_names
         # ===== 1. NUMERIC TENSOR: 5×6×25 =====
         self.expectation_tensor = np.zeros((5, 6, 25))
         
@@ -2643,7 +2779,6 @@ class Neuron:
         self.B_matrices_dict = {}
         
         # ===== 4. PATTERN SUM EXPECTATIONS: 5×25 =====
-        # Each is sum of 6 vectors (self + 5 neighbors) for that pattern
         self.pattern_sum_expectations = np.zeros((5, 25))
         
         # ===== 5. PATTERN SELF EXPECTATIONS: 5×25 (for X matrix) =====
@@ -2652,7 +2787,8 @@ class Neuron:
         # ===== 6. PATTERN NEIGHBOR EXPECTATIONS: 5×5×25 (for P matrices) =====
         self.neighbor_expectation_tensor = np.zeros((5, 5, 25))
         
-        for p_idx, pattern_name in enumerate(pattern_names):
+        # Use the class variables directly
+        for p_idx, pattern_name in enumerate(Neuron.pattern_names):
             pattern = self.rose.get_pattern(pattern_name)
             if not pattern:
                 continue
@@ -2663,7 +2799,7 @@ class Neuron:
             # Track sum for this pattern
             pattern_sum = np.zeros(25)
             
-            for pos_idx, position in enumerate(position_names):
+            for pos_idx, position in enumerate(Neuron.position_names):
                 # Get expectation dictionary
                 expectation_dict = pattern.get_vector(position)
                 
@@ -2683,7 +2819,7 @@ class Neuron:
                 if position == "self":
                     self.self_expectation_matrix[p_idx, :] = numeric_vector
                 else:  # Neighbor position
-                    neighbor_idx = position_names.index(position) - 1  # -1 because "self" is first
+                    neighbor_idx = Neuron.position_names.index(position) - 1
                     self.neighbor_expectation_tensor[p_idx, neighbor_idx, :] = numeric_vector
             
             # Store the complete pattern sum (all 6 vectors)
@@ -2691,9 +2827,8 @@ class Neuron:
             
             print(f"  ✓ Pattern {pattern_name}: sum vector norm = {np.linalg.norm(pattern_sum):.3f}")
         
-        self.pattern_names = pattern_names
         print(f"  ✓ Pattern sums initialized: shape {self.pattern_sum_expectations.shape}")
-    
+
     def _expectation_dict_to_numeric_vector(self, expectation_dict: Dict[EnhancedGrandClass, AttributeExpression]) -> np.ndarray:
         """Convert expectation dictionary to 25D numeric vector"""
         vector = np.zeros(25)
@@ -2825,8 +2960,42 @@ class Neuron:
         if vector.sum() > 0:
             return vector / vector.sum()
         return np.ones_like(vector) / len(vector)
-
- 
+  
+    def _initialize_unknown_B_matrix(self):
+        """Initialize B matrix for UNKNOWN pattern with proper uniform distribution"""
+        if self.current_pattern == "UNKNOWN":
+            print("  🔄 Initializing UNKNOWN B matrix")
+            # Start with uniform distribution but with slight noise to break symmetry
+            self.B_matrix = np.ones((5, 5)) / 5.0
+            
+            # Add tiny random variations to prevent perfect symmetry
+            noise = np.random.uniform(-0.01, 0.01, (5, 5))
+            self.B_matrix += noise
+            
+            # Row-normalize
+            row_sums = self.B_matrix.sum(axis=1, keepdims=True)
+            self.B_matrix = self.B_matrix / row_sums
+            
+            # Initialize unknown permutation cache if not already done
+            if not hasattr(self, 'unknown_perm_cache'):
+                self.unknown_perm_cache = {
+                    't_gamma_tensor': None,
+                    'initial_bias_updated': False,
+                    'm_cycles': {
+                        1: {'k_values': {}, 'W_p_matrix': None, 'completed': False},
+                        2: {'k_values': {}, 'W_p_matrix': None, 'completed': False},
+                        3: {'k_values': {}, 'W_p_matrix': None, 'completed': False},
+                        4: {'k_values': {}, 'W_p_matrix': None, 'completed': False}
+                    },
+                    'current_m': 1,
+                    'permutations_generated': set(),
+                    'max_m': 4,
+                    'cycle_history': []
+                }
+            
+            print(f"  ✓ UNKNOWN B matrix initialized (trace: {np.trace(self.B_matrix):.3f})")
+            
+    
     def _initialize_matrices_from_extracted_data(self):
         """Initialize all operational matrices from extracted data"""
         pattern_idx = self.current_pattern_idx
@@ -2897,34 +3066,28 @@ class Neuron:
         # Update bias
         updated_b = eigen_matrix @ b_vector
         return self._normalize_vector(updated_b)
-            
+
     def _phase1_self_observation(self):
+        """Enhanced Phase 1 with α and γ updates for UNKNOWN"""
         # Step 1: Collect 5×25 observation array (one row per pattern)
         V_self = np.zeros((5, 25))
         
         for pattern_idx in range(5):
             try:
-                # Observe self element (same DOM element for all patterns)
                 xpath = self._coord_to_xpath(self.coordinate)
                 element = self.dom_driver.find_element(By.XPATH, xpath)
                 dom_state = self._observe_element(element)
                 
                 if dom_state.get('exists', False):
-                    # Convert DOM state using pattern i's self-expectations
                     V_self[pattern_idx] = self._dom_state_to_observation_vector(
-                        dom_state, 
-                        "self", 
-                        pattern_idx,  # Use each pattern's expectations
-                        expectation_row=None
+                        dom_state, "self", pattern_idx, expectation_row=None
                     )
                 else:
                     V_self[pattern_idx] = np.zeros(25)
             except Exception as e:
-                # If observation fails, use zero vector
                 V_self[pattern_idx] = np.zeros(25)
-                print(f"    ⚠ Pattern {self.pattern_names[pattern_idx]} self observation failed: {e}")
         
-        # Store current pattern's observation for later use (e.g., equality resolution)
+        # Store current pattern's observation
         self.self_vector = V_self[self.current_pattern_idx]
         
         # Step 2: Transform ALL 5 observations together to 87D
@@ -2932,60 +3095,307 @@ class Neuron:
         
         # Step 3: S = T(X) where X is pattern self-expectations (5×87)
         S = self.T(self.self_expectation_matrix)  # 5×87
-        self.S_matrix_87d = S  # Store as S
+        self.S_matrix_87d = S
         
         # Step 4: Compute self covariance: S* = S · W_s^⊤
         self.S_star = S @ T_self.T  # 5×5
         
-        # === ADD NORMALIZATION HERE ===
+        # Normalize
         S_star_normalized = self.S_star.copy()
         row_sums = S_star_normalized.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
         S_star_normalized = S_star_normalized / row_sums
         
-        # Steps 6-7: Eigen decomposition and bias update
+        # Step 5: Eigen decomposition α (SELF IDENTITY)
         self.eigen_alpha, self.eigen_alpha_v = self._compute_dominant_eigen(S_star_normalized)
         
-        # Update b_initial with eigen decomposition
+        # Step 6: Update b_initial with α eigen decomposition (SELF BIAS)
         if self.eigen_alpha_v is not None:
             M_alpha = self.eigen_alpha * np.outer(self.eigen_alpha_v, self.eigen_alpha_v)
             self.b_initial = self._normalize_vector(M_alpha @ self.b_initial)
+        
+        # === UNKNOWN-SPECIFIC: Apply γ update to B MATRIX ===
+        if self.current_pattern == "UNKNOWN":
+            print(f"  🔍 UNKNOWN pattern: applying γ update to B matrix")
             
+            # Ensure B matrix is initialized
+            if self.B_matrix is None or np.allclose(self.B_matrix, np.ones((5,5))/5):
+                self._initialize_unknown_B_matrix()
+            
+            # Apply γ update to B matrix if not already done
+            if not self.unknown_perm_cache['b_matrix_updated']:
+                print(f"  🔧 First time UNKNOWN - applying γ to B matrix")
+                self._apply_gamma_update_to_B()
+            else:
+                print(f"  ✓ B matrix already γ-updated")
+    
+    def _build_void_aware_t_gamma_tensor(self) -> np.ndarray:
+        """
+        T_gamma: Build 5×5×87 base positional tensor WITH void rerouting
+        For each neighbor position, observe with all 5 pattern expectations
+        Uses membrane reroutes when available
+        """
+        print("  🔧 Building void-aware T_gamma tensor...")
+        
+        # We need to observe each neighbor position with each pattern's expectations
+        T_gamma_25d = np.zeros((5, 5, 25))
+        
+        for pos_idx, position in enumerate(self.neighbor_positions):
+            # Get coordinate for this position (with potential reroute)
+            original_coord = self._get_coordinate_for_position(position)
+            coord_to_observe = original_coord
+            
+            # ===== CHECK FOR MEMBRANE REROUTE =====
+            if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+                reroute_coord = self.membrane_reroutes[position]
+                print(f"    🌀 Using reroute for {position}: {original_coord} → {reroute_coord}")
+                coord_to_observe = reroute_coord
+            
+            # ===== CHECK IF WAITING FOR MEMBRANE PROCESSING =====
+            elif hasattr(self, 'membrane_waiting') and position in self.membrane_waiting:
+                void_coord = self.membrane_waiting[position]
+                # Check if membrane has processed this void
+                if hasattr(self.axon_network, 'void_system'):
+                    reroute = self.axon_network.void_system.get_reroute(self.id, void_coord)
+                    if reroute and reroute['reroute_to']:
+                        # Reroute ready - use it and update membrane_reroutes
+                        if not hasattr(self, 'membrane_reroutes'):
+                            self.membrane_reroutes = {}
+                        self.membrane_reroutes[position] = reroute['reroute_to']
+                        del self.membrane_waiting[position]
+                        coord_to_observe = reroute['reroute_to']
+                        print(f"    🌀 Membrane provided reroute for {position}: {reroute['reroute_to']}")
+                    else:
+                        # Still waiting for membrane processing
+                        print(f"    ⏳ Waiting for membrane processing of void at {position}")
+                        T_gamma_25d[:, pos_idx, :] = np.zeros((5, 25))
+                        continue
+                else:
+                    # No void system available
+                    T_gamma_25d[:, pos_idx, :] = np.zeros((5, 25))
+                    continue
+            
+            if not coord_to_observe:
+                print(f"    ⚠ No coordinate for {position}, using zeros")
+                T_gamma_25d[:, pos_idx, :] = np.zeros((5, 25))
+                continue
+            
+            # ===== OBSERVE COORDINATE (WITH VOID HANDLING) =====
+            try:
+                xpath = self._coord_to_xpath(coord_to_observe)
+                element = self.dom_driver.find_element(By.XPATH, xpath)
+                dom_state = self._observe_element(element)
+                
+                if not dom_state.get('exists', False):
+                    # Element doesn't exist at rerouted coordinate either
+                    print(f"    ⚠ Element not found at {position} ({coord_to_observe})")
+                    
+                    # If this was a reroute that failed, clear it and mark as void
+                    if coord_to_observe != original_coord:
+                        print(f"    🌀 Reroute failed, marking original as void: {original_coord}")
+                        if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+                            del self.membrane_reroutes[position]
+                        
+                        # Register original coordinate as void
+                        if original_coord:
+                            self._handle_void(position, original_coord)
+                    
+                    T_gamma_25d[:, pos_idx, :] = np.zeros((5, 25))
+                    continue
+                    
+                # ===== SUCCESSFUL OBSERVATION =====
+                # For each pattern, create observation using that pattern's expectations
+                for pattern_idx in range(5):
+                    # Get expectation dictionary for this pattern and position
+                    if position == "parent":
+                        pos_dict_idx = 1
+                    elif position == "up":
+                        pos_dict_idx = 2
+                    elif position == "down":
+                        pos_dict_idx = 3
+                    elif position == "left":
+                        pos_dict_idx = 4
+                    elif position == "right":
+                        pos_dict_idx = 5
+                    else:
+                        pos_dict_idx = 0
+                    
+                    expectation_dict = self.expectation_dicts[pattern_idx, pos_dict_idx]
+                    
+                    # Create observation vector using this pattern's expectations
+                    obs_vector = self._dom_state_to_observation_vector_with_dict(
+                        dom_state, expectation_dict
+                    )
+                    T_gamma_25d[pattern_idx, pos_idx, :] = obs_vector
+                    
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "no such element" in error_msg or "stale" in error_msg:
+                    # Void detected at rerouted coordinate
+                    print(f"    🌀 Void at rerouted coordinate {coord_to_observe}")
+                    
+                    # Clear failed reroute
+                    if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+                        del self.membrane_reroutes[position]
+                    
+                    # Register original as void if not already
+                    if original_coord:
+                        self._handle_void(position, original_coord)
+                else:
+                    print(f"    ⚠ Failed to observe {position} ({coord_to_observe}): {e}")
+                
+                T_gamma_25d[:, pos_idx, :] = np.zeros((5, 25))
+                continue
+        
+        # Transform to 87D
+        T_gamma_87d = np.zeros((5, 5, 87))
+        for pos_idx in range(5):
+            # Get all patterns at this position (5×25)
+            patterns_at_pos = T_gamma_25d[:, pos_idx, :]
+            
+            # Transform together using T()
+            transformed = self.T(patterns_at_pos)  # 5×87
+            T_gamma_87d[:, pos_idx, :] = transformed
+        
+        print(f"  ✓ Void-aware T_gamma tensor built: shape {T_gamma_87d.shape}")
+        
+        # Log any pending membrane waits
+        if hasattr(self, 'membrane_waiting') and self.membrane_waiting:
+            print(f"  ⏳ Still waiting for {len(self.membrane_waiting)} membrane reroutes")
+        
+        return T_gamma_87d
+
+    def _apply_gamma_update_to_B(self):
+        """Apply γ eigen update directly to B matrix for UNKNOWN with void awareness"""
+        print("  🔧 Applying γ update to B matrix with void awareness...")
+        
+        # Step 1: Build void-aware T_gamma tensor if not already done
+        if self.unknown_perm_cache['t_gamma_tensor'] is None:
+            print("  🔧 Building void-aware T_gamma tensor for γ update...")
+            self.unknown_perm_cache['t_gamma_tensor'] = self._build_void_aware_t_gamma_tensor()
+        
+        T_gamma = self.unknown_perm_cache['t_gamma_tensor']  # 5×5×87
+        
+        # Check if tensor has any non-zero observations
+        if np.all(T_gamma == 0):
+            print("  ⚠ T_gamma tensor is all zeros (all voids?) - skipping γ update")
+            return
+        
+        # Step 2: Compute T_gamma covariance matrix
+        # Flatten positions: 5 patterns × (5×87) = 5×435
+        T_gamma_flat = T_gamma.reshape(5, -1)
+        
+        # Compute covariance: G_gamma = T_gamma @ T_gamma.T (5×5)
+        G_gamma = T_gamma_flat @ T_gamma_flat.T
+        
+        # Check if covariance is valid
+        if np.all(G_gamma == 0):
+            print("  ⚠ G_gamma covariance is all zeros - skipping γ update")
+            return
+        
+        # Normalize rows (makes it a proper probability matrix)
+        G_gamma_normalized = G_gamma.copy()
+        row_sums = G_gamma_normalized.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1
+        G_gamma_normalized = G_gamma_normalized / row_sums
+        
+        # Step 3: Eigen decomposition γ
+        self.eigen_gamma, self.eigen_gamma_v = self._compute_dominant_eigen(G_gamma_normalized)
+        
+        # Step 4: Update B matrix with γ (not b_initial!)
+        if self.eigen_gamma_v is not None:
+            # Create γ update matrix
+            M_gamma = self.eigen_gamma * np.outer(self.eigen_gamma_v, self.eigen_gamma_v)
+            
+            # Apply to B matrix: B_new = normalize(M_gamma @ B_old)
+            B_updated = M_gamma @ self.B_matrix
+            
+            # Row-normalize to keep it a proper probability matrix
+            row_sums = B_updated.sum(axis=1, keepdims=True)
+            B_updated_normalized = np.divide(B_updated, row_sums, where=row_sums != 0)
+            
+            # Update B matrix
+            self.B_matrix = B_updated_normalized
+            self.unknown_perm_cache['cycle_history'].append('gamma_B')
+            
+            print(f"  ✓ γ = {self.eigen_gamma:.3f}")
+            print(f"    B matrix trace after γ: {np.trace(self.B_matrix):.3f}")
+            
+            # Log membrane status
+            if hasattr(self, 'membrane_waiting') and self.membrane_waiting:
+                print(f"    ⏳ Still waiting for {len(self.membrane_waiting)} membrane reroutes")
+            if hasattr(self, 'membrane_reroutes') and self.membrane_reroutes:
+                print(f"    ✅ Using {len(self.membrane_reroutes)} active reroutes")
+        
+        self.unknown_perm_cache['b_matrix_updated'] = True
+        
+        # Log γ update with membrane info
+        membrane_info = {}
+        if hasattr(self, 'membrane_waiting'):
+            membrane_info['waiting_for'] = list(self.membrane_waiting.keys())
+        if hasattr(self, 'membrane_reroutes'):
+            membrane_info['active_reroutes'] = list(self.membrane_reroutes.keys())
+        
+        self.fire_axon('UNKNOWN_UPDATE', {
+            'update_type': 'gamma_B_matrix',
+            'eigen_gamma': float(self.eigen_gamma) if self.eigen_gamma else 0.0,
+            'B_matrix_trace': float(np.trace(self.B_matrix)),
+            'B_matrix_diag': np.diag(self.B_matrix).tolist(),
+            'history': self.unknown_perm_cache['cycle_history'].copy(),
+            'membrane_status': membrane_info
+        })
+
+
+    def _filter_observation_with_expectation(self, observation: np.ndarray, 
+                                            expectation_dict: Dict) -> np.ndarray:
+        """
+        Filter an observation through expectation dictionary
+        Returns expectation-filtered observation vector
+        """
+        filtered = np.zeros_like(observation)
+        
+        # Convert DOM attributes to our vocabulary
+        dom_state = {'exists': True}  # Simplified - in real code, would have actual DOM state
+        our_attributes = self._dom_to_our_vocabulary(dom_state)
+        
+        # Evaluate each dimension
+        all_dimensions = EnhancedGrandClass.get_all_dimensions()
+        for i, dimension in enumerate(all_dimensions):
+            if dimension in expectation_dict:
+                expr = expectation_dict[dimension]
+                observed_attrs = our_attributes.get(dimension, set())
+                filtered[i] = expr.evaluate(observed_attrs)
+        
 
     # ===== PHASE 2: COMPETITIVE ASSIGNMENT =====
-
     def _phase2_competitive_assignment(self):
-            """EXACT FLOW: Apply hierarchical selection H(B) and permutation Y"""
-            
-            # ===== EXACT STEP: K = YH = permutation operator =====
-            # 1. H(B) gives indices
-            indices = self._apply_hierarchical_selection(self.B_matrix)
-
-            # Store for membrane rerouting
-            self.hierarchical_indices = indices.copy()
-
-            # 2. Y applies permutation to expectation matrix
-            # Get current pattern's expectation matrix
-            P_i = self.P_matrix
-            
-            # Apply permutation: P_i_k = K[B](P_i)
-            P_i_k = self._apply_permutation_transform(indices, P_i)
-            self.P_permuted = P_i_k  # Store for observation
-            
-            # 3. Store assignment based on permutation
-            self.assignment = {}
-            for pos_idx, expectation_row in enumerate(indices):
-                position = self.neighbor_positions[pos_idx] if pos_idx < len(self.neighbor_positions) else f"pos_{pos_idx}"
-                self.assignment[position] = expectation_row
-            
-            
-            # Log assignment
-            self.fire_axon('HIERARCHICAL_ASSIGNMENT', {
-                'indices': indices,
-                'assignment': self.assignment,
-                'B_matrix_trace': float(np.trace(self.B_matrix))
-            })
+        """Phase 2 - Clean version without ω"""
+        # 1. H(B) gives indices (B matrix already γ-updated for UNKNOWN)
+        indices = self._apply_hierarchical_selection(self.B_matrix)
+        self.hierarchical_indices = indices.copy()
+        
+        # 2. Y applies permutation to expectation matrix
+        P_i = self.P_matrix
+        P_i_k = self._apply_permutation_transform(indices, P_i)
+        self.P_permuted = P_i_k
+        
+        # 3. Store assignment
+        self.assignment = {}
+        for pos_idx, expectation_row in enumerate(indices):
+            position = self.neighbor_positions[pos_idx] if pos_idx < len(self.neighbor_positions) else f"pos_{pos_idx}"
+            self.assignment[position] = expectation_row
+        
+        # Log assignment
+        self.fire_axon('HIERARCHICAL_ASSIGNMENT', {
+            'indices': indices,
+            'assignment': self.assignment,
+            'B_matrix_trace': float(np.trace(self.B_matrix)),
+            'B_matrix_γ_updated': self.unknown_perm_cache.get('b_matrix_updated', False) 
+                                if self.current_pattern == "UNKNOWN" else False
+        })
+        
     # ===== Phase 3 : Neighbor processing ====== 
+
 
     def _observe_coordinate(self, coordinate: Tuple[int, ...]) -> np.ndarray:
         """Observe a coordinate and return 25D vector"""
@@ -3084,27 +3494,12 @@ class Neuron:
 
     def _handle_void(self, position, void_coordinate):
         """Handle void detection and register with membrane system"""
-        # Prepare neuron data
-        neuron_data = {
-            'neuron_coord': self.coordinate,
-            'input_direction': position,
-            'hierarchical_indices': getattr(self, 'hierarchical_indices', list(range(5))),
-            'pattern': self.current_pattern
-        }
-        
         # Register with void system
         self.axon_network.void_system.register_void(
             void_coordinate=void_coordinate,
             neuron_id=self.id,
             neuron_data=neuron_data
         )
-        
-        # Set waiting state
-        if not hasattr(self, 'membrane_waiting'):
-            self.membrane_waiting = {}
-        self.membrane_waiting[position] = void_coordinate
-        
-        print(f"  🌀 Void at {position} ({void_coordinate}) - registered for rerouting")
 
 
     def _register_with_membrane(self, void_coordinate: Tuple[int, ...], position: str):
@@ -3142,37 +3537,20 @@ class Neuron:
             print(f"  ✅ Membrane processing complete for {void_coordinate}")
             print(f"     Reroute to: {reroute_coordinate}")
 
-
     def _phase4_matrix_updates(self):
-        """EXACT FLOW: Update matrices with D = T(P_i_k) @ T(w_p_k)^T in 87D"""
+        """Phase 4 with UNKNOWN distinction and β update"""
         
-        # ===== HANDLE UNKNOWN PATTERN =====
-        if self.current_pattern == "UNKNOWN":
-            # UNKNOWN pattern has no position bias matrix or neighbor expectations
-            # Just propagate b_initial to b_final
-            self.b_final = self.b_initial.copy()
-            self.b_vector = self.b_final.copy()
-            self.D_matrix_87d = np.eye(5)  # Identity as placeholder
-            
-            print(f"  ⚠ UNKNOWN pattern: skipping position updates")
-            print(f"     - b_final = b_initial: {[f'{x:.3f}' for x in self.b_final]}")
-            return
-        
-        # ===== STEP 1: Get permuted expectations in 87D =====
-        # First, get the permuted P matrix from Phase 2
+        # ===== NORMAL D MATRIX CALCULATION (ALL PATTERNS) =====
+        # Get permuted expectations in 87D
         if not hasattr(self, 'P_permuted') or self.P_permuted is None:
-            # Fallback: use original P matrix
             P_matrix = self.P_matrix.copy()
         else:
             P_matrix = self.P_permuted.copy()
         
-        # Transform ALL expectation rows together to capture relational encoding
-        # P_i_k_87d = T(P_matrix) where P_matrix is 5×25
         P_i_k_87d = self.T(P_matrix)  # 5×87
         
-        # ===== STEP 2: Get neighbor observations in 87D =====
-        # We need to transform observations that actually exist
-        # Collect non-zero observation rows
+        # Get neighbor observations in 87D
+        W_p_87d = np.zeros((5, 87))
         observed_rows = []
         observed_indices = []
         
@@ -3181,41 +3559,30 @@ class Neuron:
                 observed_rows.append(self.O_matrix[i])
                 observed_indices.append(i)
         
-        # Initialize W_p_87d with zeros
-        W_p_87d = np.zeros((5, 87))
-        
         if observed_rows:
-            # Convert to array for T() transformation
-            observed_array = np.array(observed_rows)  # k×25 where k ≤ 5
-            
-            # Transform observed rows together to capture relational encoding
-            transformed_observed = self.T(observed_array)  # k×87
-            
-            # Map back to full 5×87 matrix
+            observed_array = np.array(observed_rows)
+            transformed_observed = self.T(observed_array)
             for idx, row_idx in enumerate(observed_indices):
                 W_p_87d[row_idx] = transformed_observed[idx]
         
-        # ===== STEP 3: Compute D = P_i_k_87d @ W_p_87d^T =====
+        # Compute D = P_i_k_87d @ W_p_87d^T
         self.D_matrix_87d = P_i_k_87d @ W_p_87d.T  # 5×5
         
-        # Store for history
-        self.D_matrices_history.append(self.D_matrix_87d.copy())
-        
-        # ===== STEP 4: B^ = D(B) = D @ B =====
+        # B^ = D(B) = D @ B
         B_hat = self.D_matrix_87d @ self.B_matrix
         
-        # ===== STEP 5: B* = Z(B^) = row normalize =====
+        # B* = Z(B^) = row normalize
         row_sums = B_hat.sum(axis=1, keepdims=True)
         B_star = np.divide(B_hat, row_sums, where=row_sums != 0)
         
-        # ===== STEP 6: Eigen decomposition of B* =====
+        # ===== β UPDATE (ALL PATTERNS) =====
         self.eigen_beta, self.eigen_beta_v = self._compute_dominant_eigen(B_star)
         
-        # ===== STEP 7: Update B matrix =====
+        # Update B matrix
         self.B_matrix = B_star.copy()
         self.B_matrices_history.append(self.B_matrix.copy())
         
-        # ===== STEP 8: b_final_update = Z(β * (β_v @ β_v.T) @ b_initial) =====
+        # b_final_update = Z(β * (β_v @ β_v.T) @ b_initial)
         if self.eigen_beta_v is not None:
             beta_component = self.eigen_beta * np.outer(self.eigen_beta_v, self.eigen_beta_v)
             b_updated = beta_component @ self.b_initial
@@ -3223,9 +3590,14 @@ class Neuron:
         else:
             self.b_final = self.b_initial.copy()
         
-        # Update b_vector for compatibility
+        # ===== UNKNOWN-SPECIFIC: RECORD β UPDATE =====
+        if self.current_pattern == "UNKNOWN":
+            self.unknown_perm_cache['cycle_history'].append('beta')
+        
+        # Update b_vector
         self.b_vector = self.b_final.copy()
         self.b_vectors_history.append(self.b_final.copy())
+
 
 
     # ===== FIX _phase5_tensor_fallback to match exact flow =====
@@ -3246,68 +3618,89 @@ class Neuron:
             return "RECYCLING"
         else:
             return "TENSOR_FALLBACK"
-    
-    def _phase5_tensor_fallback(self) -> bool:
-        """
-        Tensor fallback (Steps 18-23 from document) - EXACT IMPLEMENTATION
-        Returns: True if pattern changed (should restart cycle), False otherwise
-        """
 
-        E = self.T_exp.copy()  # 5×6×87
-    
-        # Step 19: Observation arrays O_q ∈ ℝ^{6×87} for each pattern q
-        O_obs = self.T_zeta()  # 5×6×87
+
+    def _phase5_tensor_fallback(self) -> bool:
+        """Phase 5 with clear α/γ/β/ζ roles"""
+        # ===== NORMAL TENSOR FALLBACK =====
+        # Build expectation tensor E = 5×6×87
+        E = self.T_exp.copy()
         
-        # Step 20: Compute grand covariance G ∈ ℝ^{5×5}
-        # We need to flatten to 5×522 to use @
-        E_flat = E.reshape(5, -1)  # 5×(6×87) = 5×522
-        O_flat = O_obs.reshape(5, -1)  # 5×522
+        # Build observation tensor O = 5×6×87
+        O_obs = self.T_zeta()
         
-        G = E_flat @ O_flat.T  # 5×5, same structure as S_star
+        # Compute grand covariance G ∈ ℝ^{5×5}
+        E_flat = E.reshape(5, -1)
+        O_flat = O_obs.reshape(5, -1)
+        G = E_flat @ O_flat.T
         
-        # Step 21: Dominant eigenpair (ζ, v_ζ) of G - NORMALIZE like β does
+        # Normalize
         G_normalized = G.copy()
         row_sums = G_normalized.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
         G_normalized = G_normalized / row_sums
         
+        # ===== ζ UPDATE (FINAL PATTERN DECISION) =====
         ζ, v_ζ = self._compute_dominant_eigen(G_normalized)
         
-        # Store results
-        self.tensor_G_matrix = G.copy()  # Store unnormalized
-        self.tensor_ζ = ζ  # Store normalized eigenvalue
-        
-        # Step 22: Final bias update: b_grand = normalize(v_ζ ⊙ b_final)
-        b_grand = v_ζ * self.b_final
-        b_grand_normalized = self._normalize_vector(b_grand)
-            
-        # Store results
-        self.b_tensor = b_grand_normalized.copy()
+        # Store ζ results
+        self.eigen_zeta = ζ
+        self.eigen_zeta_v = v_ζ
         self.tensor_G_matrix = G.copy()
-        self.tensor_ζ = ζ
         
-        # Step 23: Pattern decision
+        # Update b_final with ζ (final pattern decision)
+        b_grand = v_ζ * self.b_final if v_ζ is not None else self.b_final.copy()
+        b_grand_normalized = self._normalize_vector(b_grand)
+        
+        # ===== PATTERN DECISION LOGIC =====
         dominant_pattern_idx = np.argmax(b_grand_normalized)
         dominant_prob = b_grand_normalized[dominant_pattern_idx]
         current_prob = b_grand_normalized[self.current_pattern_idx]
         
-        # Decision: Switch pattern if different AND significantly better
-        if dominant_pattern_idx != self.current_pattern_idx:
-            if dominant_prob > current_prob + 0.05:  # 5% better
-                print(f"  🔄 Switching to {self.pattern_names[dominant_pattern_idx]}")
-                self._switch_pattern(self.pattern_names[dominant_pattern_idx], dominant_prob)
-                return True  # Pattern changed, restart cycle
+        # ===== UNKNOWN-SPECIFIC LOGIC =====
+        if self.current_pattern == "UNKNOWN":
+            print(f"  🔍 UNKNOWN pattern decision (after α/γ/β/ζ):")
+            print(f"     - Current (UNKNOWN) probability: {current_prob:.3f}")
+            print(f"     - Dominant pattern: {self.pattern_names[dominant_pattern_idx]} ({dominant_prob:.3f})")
+            print(f"     - Eigen history: {self.unknown_perm_cache['cycle_history']}")
+            
+            # UNKNOWN decision: switch if another pattern is clearly better
+            if dominant_pattern_idx != self.current_pattern_idx:
+                if dominant_prob > current_prob + 0.05:  # 5% better
+                    print(f"  🔄 UNKNOWN switching to {self.pattern_names[dominant_pattern_idx]}")
+                    self._switch_pattern(self.pattern_names[dominant_pattern_idx], dominant_prob)
+                    return True  # Pattern changed, restart cycle
+                else:
+                    # Another pattern slightly better but not enough
+                    print(f"  ⚖️  UNKNOWN staying (dominant only {dominant_prob-current_prob:.3f} better)")
+            else:
+                # UNKNOWN remains dominant
+                print(f"  ✅ UNKNOWN remains dominant ({current_prob:.3f})")
+                
+                # If UNKNOWN is confident, enter recycling
+                if current_prob >= 0.5:
+                    self._enter_positional_recycling()
+        
+        # ===== NORMAL PATTERN DECISION LOGIC =====
+        else:
+            # Normal pattern decision logic
+            if dominant_pattern_idx != self.current_pattern_idx:
+                if dominant_prob > current_prob + 0.05:
+                    print(f"  🔄 Switching to {self.pattern_names[dominant_pattern_idx]}")
+                    self._switch_pattern(self.pattern_names[dominant_pattern_idx], dominant_prob)
+                    return True
         
         # Update bias with tensor result
         self.b_vector = b_grand_normalized.copy()
         self.b_final = b_grand_normalized.copy()
         
         # Check if we now have high confidence
-        if b_grand_normalized[self.current_pattern_idx] >= 0.5: #0.2 --> 0.5 is extremely good 
+        if b_grand_normalized[self.current_pattern_idx] >= 0.5:
             self._enter_positional_recycling()
         
-        return False  # Pattern didn't change
+        return False
         
+
     # ===== PHASE 5: CONFIDENCE & DECISION =====
     def _build_enhanced_tensors(self):
         """Build enhanced expectation tensors once during initialization"""
@@ -3360,6 +3753,11 @@ class Neuron:
         # Log circuitry update
         self._log_circuitry_update()
         
+        self.fire_axon('HEARTBEAT', {
+        'neuron_id': self.id,
+        'heartbeat_count': self.cycle_count  # Use cycle count as heartbeat number
+    })
+
         # Fire cycle complete axon
         self.fire_axon('CYCLE_COMPLETE', {
             'cycle': self.cycle_count,
@@ -3382,7 +3780,7 @@ class Neuron:
         # Update recycling
         self.recycling_iteration += 1
         self.b_inital = self.b_final #ensure vector is updated 
-        self.process_cycle() #restart cycle 
+        self.process_cycle() #restart cycle -- neuron is destroyed when needed via nexus 
         
         print(f"  ✅ Cycle {self.cycle_count} complete - Confidence: {self.confidence_score:.3f}")
         
@@ -3830,33 +4228,45 @@ class Neuron:
             'vector_norm': float(np.linalg.norm(vector)),
             'source_neuron': self.id
         })
-        
+
     def process_cycle(self) -> bool:
-        """Main processing cycle with membrane integration"""
+        """Main processing cycle with clean α/γ flow and membrane awareness"""
         self.cycle_count += 1
         
-        # Store assignment indices before observation
-        if hasattr(self, 'assignment'):
-            self.hierarchical_indices = list(self.assignment.values())
+        print(f"\n🧠 Neuron {self.id} Cycle {self.cycle_count} [{self.current_pattern}]")
         
-        # Execute phases
-        self._phase1_self_observation()
-        self._phase2_competitive_assignment()
-        self._phase3_neighbor_observation() if self.learning_mode != "TARGETED" else self._phase3_targeted_observation() # Now includes membrane processing
-        self._phase4_matrix_updates()
+        # Show membrane status
+        if hasattr(self, 'membrane_waiting') and self.membrane_waiting:
+            print(f"  ⏳ Waiting for {len(self.membrane_waiting)} membrane reroutes: {list(self.membrane_waiting.keys())}")
+        if hasattr(self, 'membrane_reroutes') and self.membrane_reroutes:
+            print(f"  ✅ Using {len(self.membrane_reroutes)} active reroutes: {list(self.membrane_reroutes.keys())}")
+        
+        # Special logging for UNKNOWN
+        if self.current_pattern == "UNKNOWN":
+            print(f"  📊 Current eigen history: {self.unknown_perm_cache['cycle_history']}")
+            print(f"  📈 b_initial (α): {[f'{x:.3f}' for x in self.b_initial]}")
+            print(f"  🎯 B matrix trace (γ): {np.trace(self.B_matrix):.3f}")
+        
+        # Execute phases with clean flow
+        self._phase1_self_observation()  # α update, γ update for B matrix
+        
+        self._phase2_competitive_assignment()  # Uses γ-updated B matrix
+        self._phase3_neighbor_observation() if self.learning_mode != "TARGETED" else self._phase3_targeted_observation()
+        self._phase4_matrix_updates()  # β update
         
         # Confidence decision
         decision = self._phase5_confidence_decision()
         
         if decision == "TENSOR_FALLBACK":
-            pattern_changed = self._phase5_tensor_fallback()
+            pattern_changed = self._phase5_tensor_fallback()  # ζ update
             if pattern_changed:
                 self._phase6_cycle_completion()
                 return True
         
         self._phase6_cycle_completion()
         return True
-        
+
+
 # ===== PUBLIC METHODS FOR NEXUS =====
    
     def get_matrix_sample(self) -> Dict:
@@ -4349,4 +4759,4 @@ class AxonNetwork:
 
 
 
-
+# END -- and the angels sang, for thee my love 
