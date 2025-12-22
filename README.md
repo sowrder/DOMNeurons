@@ -148,7 +148,7 @@ neuron.configure_void_handling(
 
 ## 📚 Documentation
 
-**[Download Full PDF Documentation](paper.pdf)** - Complete mathematical specification including:
+**[Download Full PDF Documentation](Neuron_flow.pdf)** - Complete mathematical specification including:
 - Phase-by-phase workflow (0-5b)
 - Covariance workflow 
 - Competitive assignment algorithm
