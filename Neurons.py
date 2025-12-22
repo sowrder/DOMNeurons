@@ -104,7 +104,7 @@ Recusrive Observer Semantics Engine - how the fuck Deepseek came up with thisano
 """
 
 NULL = "∅"
-# ===== 25 dimensional triple layer binary fingerprint ====
+# ===== 25 dimensional triple layer binary fingerprint base dimensions (base 9 non binary)====
 
 class EnhancedGrandClass(Enum):
     """Orthogonal attribute categories with uniqueness dimensions"""
@@ -1888,11 +1888,6 @@ class ROSE:
         return updates
 
 
-
-
-
-
-
 """
 🧠 NEURON: DOM Neural Unit with ROSE Integration
 """
@@ -1905,11 +1900,60 @@ Enhanced with matrix-based calculations and continuous Baesian recycling
 
 # ===== Rerouting objects to maximize information gain, the membrane 
 
-
-
 class VoidSystem:
     """Simplified void rerouting using T() transform as specified"""
-    
+    def __init__(self, axon_network):
+        self.axon_network = axon_network
+        self.membranes = {}  # void_coordinate -> MembraneState
+        
+    def register_void(self, void_coordinate, neuron_id, neuron_data):
+        """Neuron registers at a void"""
+        if void_coordinate not in self.membranes:
+            self.membranes[void_coordinate] = self.MembraneState(void_coordinate)
+            
+        membrane = self.membranes[void_coordinate]
+        membrane.add_neuron(neuron_id, neuron_data)
+        
+    def process_voids(self):
+        """Process all active voids"""
+        processed_any = False
+        
+        for void_coord, membrane in list(self.membranes.items()):
+            if not membrane.port:
+                continue
+                
+            # Process each unprocessed neuron
+            for neuron_id, conn in list(membrane.connections.items()):
+                if not conn['processed']:
+                    # Get neuron object - FIX: axon_network needs get_neuron_by_id method
+                    # For now, we'll find it by coordinate
+                    neuron = None
+                    for coord, neuron_data in self.axon_network.neuron_registry.items():
+                        if neuron_data.get('id') == neuron_id:
+                            # Need to store neuron references somewhere accessible
+                            # This is a hack - you need a proper neuron lookup
+                            pass
+                    
+                    if neuron:
+                        processed = membrane.process_neuron(neuron_id, neuron)
+                        if processed:
+                            processed_any = True
+                                
+        return processed_any
+        
+    def get_reroute(self, neuron_id, void_coordinate):
+        """Get reroute result for a neuron"""
+        if void_coordinate in self.membranes:
+            membrane = self.membranes[void_coordinate]
+            if neuron_id in membrane.connections:
+                conn = membrane.connections[neuron_id]
+                if conn['processed']:
+                    return {
+                        'reroute_to': conn['reroute_to'],
+                        'similarity': conn['similarity']
+                    }
+        return None
+        
     class MembraneState:
         def __init__(self, void_coordinate):
             self.coordinate = void_coordinate
@@ -2046,11 +2090,11 @@ class VoidSystem:
             
             while len(candidates) < 4 and depth <= 5:
                 for direction in directions:
-                    candidate = self._get_coord_in_direction(
-                        void_coord, direction, depth, neuron
+                    candidate = self._get_coordinate_in_direction(
+                        void_coord, direction, depth
                     )
                     
-                    if candidate in excluded:
+                    if candidate is None or candidate in excluded:
                         continue
                         
                     # Check if coordinate has element
@@ -2074,71 +2118,27 @@ class VoidSystem:
                 
             return candidates[:4]
             
-        def _get_coord_in_direction(self, base_coord, direction, distance, neuron):
-            """Use neuron's coordinate logic"""
+        def _get_coordinate_in_direction(self, base_coord, direction, distance):
+            """Get coordinate in direction from base coordinate"""
             if not base_coord:
                 return None
                 
             coord = list(base_coord)
             
-            if direction == "up":
-                if len(coord) > 0:
-                    coord[-1] = max(0, coord[-1] - distance)
-            elif direction == "down":
+            if direction == "up" and len(coord) > 0:
+                coord[-1] = max(0, coord[-1] - distance)
+            elif direction == "down" and len(coord) > 0:
                 coord[-1] += distance
             elif direction == "left" and len(coord) > 1:
                 coord[-2] = max(0, coord[-2] - distance)
             elif direction == "right" and len(coord) > 1:
                 coord[-2] += distance
+            else:
+                return None
                 
             return tuple(coord)
     
-    def __init__(self, axon_network):
-        self.axon_network = axon_network
-        self.membranes = {}  # void_coordinate -> MembraneState
-        
-    def register_void(self, void_coordinate, neuron_id, neuron_data):
-        """Neuron registers at a void"""
-        if void_coordinate not in self.membranes:
-            self.membranes[void_coordinate] = self.MembraneState(void_coordinate)
-            
-        membrane = self.membranes[void_coordinate]
-        membrane.add_neuron(neuron_id, neuron_data)
-        
-    def process_voids(self):
-        """Process all active voids"""
-        processed_any = False
-        
-        for void_coord, membrane in list(self.membranes.items()):
-            if not membrane.port:
-                continue
-                
-            # Process each unprocessed neuron
-            for neuron_id, conn in list(membrane.connections.items()):
-                if not conn['processed']:
-                    # Get neuron object
-                    neuron = self.axon_network.get_neuron(neuron_id)
-                    if neuron:
-                        processed = membrane.process_neuron(neuron_id, neuron)
-                        if processed:
-                            processed_any = True
-                            
-        return processed_any
-        
-    def get_reroute(self, neuron_id, void_coordinate):
-        """Get reroute result for a neuron"""
-        if void_coordinate in self.membranes:
-            membrane = self.membranes[void_coordinate]
-            if neuron_id in membrane.connections:
-                conn = membrane.connections[neuron_id]
-                if conn['processed']:
-                    return {
-                        'reroute_to': conn['reroute_to'],
-                        'similarity': conn['similarity']
-                    }
-        return None
-
-
+          
 class Neuron:
     
     pattern_names = ["DATA_INPUT", "ACTION_ELEMENT", "CONTEXT_ELEMENT", 
@@ -2156,7 +2156,8 @@ class Neuron:
             self.id = self._generate_id()
             self.dom_driver = dom_driver
             self.axon_network = axon_network
-            
+            self.pending_coordinates = []  # [(position, coordinate)] - coordinates to retry
+            self.stalled_positions = {}  # position -> (coordinate, stall_start_time)
             # FIX: Set current_pattern BEFORE calling axon_network.register_neuron
             self.current_pattern = priori_pattern  
             self.current_pattern_idx = self._get_pattern_idx(priori_pattern)
@@ -2253,6 +2254,64 @@ class Neuron:
             self._fire_creation_axon()
             print(f"  ✓ Neuron initialized with exact flow specification")
 
+
+    def _try_observe_with_locking(self, position: str, coordinate: Tuple) -> Optional[np.ndarray]:
+        """Try to observe coordinate with locking, returns observation or None if locked"""
+        if not coordinate:
+            return np.zeros(25)
+        
+        # Skip if this is a void/membrane coordinate
+        if coordinate in self.void_coordinates:
+            return np.zeros(25)
+        
+        if hasattr(self, 'membrane_waiting') and coordinate in self.membrane_waiting.values():
+            return np.zeros(25)
+        
+        if hasattr(self, 'membrane_reroutes') and coordinate in self.membrane_reroutes.values():
+            return np.zeros(25)
+        
+        # Try to lock coordinate
+        if not self.axon_network.lock_coordinate(coordinate, self.id):
+            # Coordinate locked by someone else
+            print(f"  🔒 {position} coordinate {coordinate} locked by another neuron")
+            
+            # Add to pending list for retry later
+            if (position, coordinate) not in self.pending_coordinates:
+                self.pending_coordinates.append((position, coordinate))
+            
+            return None  # Signal that we should try other positions first
+        
+        # We have the lock, proceed with observation
+        try:
+            xpath = self._coord_to_xpath(coordinate)
+            element = self.dom_driver.find_element(By.XPATH, xpath)
+            dom_state = self._observe_element(element)
+            
+            if dom_state.get('exists', False):
+                obs_vector = self._dom_state_to_observation_vector(
+                    dom_state, position, self.current_pattern_idx,
+                    expectation_row=self.assignment.get(position)
+                )
+                
+                # Release lock
+                self.axon_network.unlock_coordinate(coordinate, self.id)
+                
+                return obs_vector
+            else:
+                # Void detected
+                self._handle_void(position, coordinate)
+                self.axon_network.unlock_coordinate(coordinate, self.id)
+                return np.zeros(25)
+                
+        except Exception as e:
+            # Error occurred, release lock
+            self.axon_network.unlock_coordinate(coordinate, self.id)
+            
+            error_msg = str(e).lower()
+            if "no such element" in error_msg or "stale" in error_msg:
+                self._handle_void(position, coordinate)
+            
+            return np.zeros(25)
 
     # Utility reverse transform  
     def _dom_state_to_observation_vector_with_dict(self, dom_state: Dict, 
@@ -2506,180 +2565,168 @@ class Neuron:
         
         print(f"🧠 Neuron {self.id} set to {self.learning_mode} learning mode")
 
-    def _phase3_targeted_observation(self):
-        """
-        TARGETED MODE: Uses existing void logic but prevents growth calls.
-        Respects existing coordination and boundaries without expanding outward.
-        """
-        observed_count = 0
-        skipped_count = 0
+    def _process_pending_reroutes(self):
+        """Process any pending membrane reroutes"""
+        if not hasattr(self, 'membrane_waiting') or not self.membrane_waiting:
+            return
         
+        if hasattr(self.axon_network, 'void_system'):
+            # Process voids in the system
+            self.axon_network.void_system.process_voids()
+            
+            # Check for any completed reroutes
+            for position, void_coord in list(self.membrane_waiting.items()):
+                reroute = self.axon_network.void_system.get_reroute(self.id, void_coord)
+                if reroute and reroute['reroute_to']:
+                    # Got a reroute
+                    if not hasattr(self, 'membrane_reroutes'):
+                        self.membrane_reroutes = {}
+                    self.membrane_reroutes[position] = reroute['reroute_to']
+                    del self.membrane_waiting[position]
+                    print(f"    🌀 Processed reroute for {position}: {reroute['reroute_to']}")
+
+    def _try_observe_with_void_handling(self, position, coordinate, is_reroute=False):
+        """Try to observe coordinate with void handling"""
+        if not coordinate:
+            return np.zeros(25)
+        
+        # Try to lock coordinate
+        if not self.axon_network.lock_coordinate(coordinate, self.id):
+            print(f"    🔒 {position} coordinate locked, will retry")
+            return np.zeros(25)
+        
+        try:
+            xpath = self._coord_to_xpath(coordinate)
+            element = self.dom_driver.find_element(By.XPATH, xpath)
+            dom_state = self._observe_element(element)
+            
+            if dom_state.get('exists', False):
+                # Successful observation
+                obs_vector = self._dom_state_to_observation_vector(
+                    dom_state, position, self.current_pattern_idx,
+                    expectation_row=self.assignment.get(position)
+                )
+                
+                # If this was a reroute and worked, log success
+                if is_reroute:
+                    print(f"    ✅ Successful reroute observation at {position}")
+                
+                return obs_vector
+            else:
+                # Element doesn't exist (void)
+                print(f"    🌀 Void at coordinate {coordinate} for {position}")
+                
+                # Register void if it's not a reroute (reroute shouldn't be void)
+                if not is_reroute:
+                    self._handle_void(position, coordinate)
+                else:
+                    # Reroute failed - clear it
+                    if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+                        del self.membrane_reroutes[position]
+                    print(f"    ❌ Reroute failed at {position}")
+                
+                return np.zeros(25)
+                
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "no such element" in error_msg or "stale" in error_msg:
+                # Void detected
+                print(f"    🌀 Void detected at {position} ({coordinate})")
+                
+                if not is_reroute:
+                    self._handle_void(position, coordinate)
+                else:
+                    # Reroute failed
+                    if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+                        del self.membrane_reroutes[position]
+                    print(f"    ❌ Reroute void at {position}")
+                
+            else:
+                print(f"    ⚠ Error observing {position}: {e}")
+            
+            return np.zeros(25)
+            
+        finally:
+            # Always release lock
+            self.axon_network.unlock_coordinate(coordinate, self.id)
+            
+    def _get_coordinate_to_observe(self, position):
+        """Get coordinate to observe, checking for reroutes first"""
+        original_coord = self._get_coordinate_for_position(position)
+        
+        # 1. Check if we have an active reroute for this position
+        if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
+            reroute_coord = self.membrane_reroutes[position]
+            print(f"    🌀 Using reroute for {position}: {original_coord} → {reroute_coord}")
+            return reroute_coord, True
+        
+        # 2. Check if we're waiting for a membrane reroute
+        if hasattr(self, 'membrane_waiting') and position in self.membrane_waiting:
+            void_coord = self.membrane_waiting[position]
+            if hasattr(self.axon_network, 'void_system'):
+                reroute = self.axon_network.void_system.get_reroute(self.id, void_coord)
+                if reroute and reroute['reroute_to']:
+                    # Got a reroute
+                    if not hasattr(self, 'membrane_reroutes'):
+                        self.membrane_reroutes = {}
+                    self.membrane_reroutes[position] = reroute['reroute_to']
+                    del self.membrane_waiting[position]
+                    print(f"    🌀 Got membrane reroute for {position}: {reroute['reroute_to']}")
+                    return reroute['reroute_to'], True
+            # Still waiting for reroute
+            print(f"    ⏳ Waiting for membrane reroute at {position}")
+            return None, False
+        
+        # 3. Use original coordinate
+        return original_coord, False
+
+    def _phase3_targeted_observation_with_locking(self):
+        """Targeted mode with void rerouting"""
         for pos_idx, position in enumerate(self.neighbor_positions):
+            coord, is_reroute = self._get_coordinate_to_observe(position)
+            
+            if not coord:
+                self.O_matrix[pos_idx] = np.zeros(25)
+                continue
+            
+            # ===== COORDINATION CHECK =====
+            if self.axon_network.coordinate_has_neuron(coord):
+                # Skip - already handled by another neuron
+                self.O_matrix[pos_idx] = np.zeros(25)
+                continue
+            
+            # ===== LOCKING CHECK =====
+            if not self.axon_network.lock_coordinate(coord, self.id):
+                # Coordinate locked, skip for now
+                self.O_matrix[pos_idx] = np.zeros(25)
+                continue
+            
             try:
-                # Get coordinate for this neighbor position
-                coord = self._get_coordinate_for_position(position)
-                if not coord:
-                    self.O_matrix[pos_idx] = np.zeros(25)
-                    skipped_count += 1
-                    continue
-                
-                # ===== COORDINATION CHECKS (READ-ONLY) =====
-                # Check if coordinate already has a neuron
-                if hasattr(self.axon_network, 'coordinate_has_neuron'):
-                    if self.axon_network.coordinate_has_neuron(coord):
-                        # Skip - already handled by another neuron
-                        skipped_count += 1
-                        self.O_matrix[pos_idx] = np.zeros(25)
-                        continue
-                
-                # ===== USE EXISTING VOID LOGIC =====
-                # Check for existing reroute from membrane system
-                if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
-                    reroute_coord = self.membrane_reroutes[position]
-                    try:
-                        # Use the rerouted coordinate
-                        xpath = self._coord_to_xpath(reroute_coord)
-                        element = self.dom_driver.find_element(By.XPATH, xpath)
-                        dom_state = self._observe_element(element)
-                        
-                        if dom_state.get('exists', False):
-                            obs_vector = self._dom_state_to_observation_vector(
-                                dom_state, 
-                                position, 
-                                self.current_pattern_idx,
-                                expectation_row=self.assignment.get(position)
-                            )
-                            self.O_matrix[pos_idx] = obs_vector
-                            observed_count += 1
-                        else:
-                            # Reroute failed, mark zeros
-                            self.O_matrix[pos_idx] = np.zeros(25)
-                            skipped_count += 1
-                        continue
-                    except:
-                        # Reroute failed, fall through
-                        pass
-                
-                # ===== CHECK IF WAITING FOR MEMBRANE PROCESSING =====
-                if hasattr(self, 'membrane_waiting') and position in self.membrane_waiting:
-                    void_coord = self.membrane_waiting[position]
-                    # Check if void system has processed this
-                    if hasattr(self.axon_network, 'void_system'):
-                        reroute = self.axon_network.void_system.get_reroute(self.id, void_coord)
-                        
-                        if reroute and reroute['reroute_to']:
-                            # Reroute ready - use it
-                            if not hasattr(self, 'membrane_reroutes'):
-                                self.membrane_reroutes = {}
-                            self.membrane_reroutes[position] = reroute['reroute_to']
-                            del self.membrane_waiting[position]
-                            
-                            try:
-                                xpath = self._coord_to_xpath(reroute['reroute_to'])
-                                element = self.dom_driver.find_element(By.XPATH, xpath)
-                                dom_state = self._observe_element(element)
-                                
-                                if dom_state.get('exists', False):
-                                    obs_vector = self._dom_state_to_observation_vector(
-                                        dom_state, position, self.current_pattern_idx,
-                                        expectation_row=self.assignment.get(position)
-                                    )
-                                    self.O_matrix[pos_idx] = obs_vector
-                                    observed_count += 1
-                                else:
-                                    self.O_matrix[pos_idx] = np.zeros(25)
-                                    skipped_count += 1
-                                continue
-                            except:
-                                # Reroute failed
-                                pass
-                    
-                    # Still waiting for membrane processing
-                    self.O_matrix[pos_idx] = np.zeros(25)
-                    skipped_count += 1
-                    continue
-                
-                # ===== NORMAL OBSERVATION WITH EXISTING VOID HANDLING =====
+                # Observe with lock
                 xpath = self._coord_to_xpath(coord)
                 element = self.dom_driver.find_element(By.XPATH, xpath)
                 dom_state = self._observe_element(element)
                 
                 if dom_state.get('exists', False):
                     obs_vector = self._dom_state_to_observation_vector(
-                        dom_state, 
-                        position, 
-                        self.current_pattern_idx,
+                        dom_state, position, self.current_pattern_idx,
                         expectation_row=self.assignment.get(position)
                     )
                     self.O_matrix[pos_idx] = obs_vector
-                    
-                    if np.any(obs_vector != 0):
-                        observed_count += 1
-                    else:
-                        skipped_count += 1
                 else:
-                    # ===== VOID DETECTED - USE EXISTING LOGIC =====
-                    # BUT PREVENT GROWTH CALLS
-                    # Register with void system for rerouting
-                    if hasattr(self.axon_network, 'void_system'):
-                        neuron_data = {
-                            'neuron_coord': self.coordinate,
-                            'input_direction': position,
-                            'hierarchical_indices': getattr(self, 'hierarchical_indices', list(range(5))),
-                            'pattern': self.current_pattern
-                        }
-                        
-                        self.axon_network.void_system.register_void(
-                            void_coordinate=coord,
-                            neuron_id=self.id,
-                            neuron_data=neuron_data
-                        )
-                        
-                        # Set waiting state but DON'T fire growth axon
-                        if not hasattr(self, 'membrane_waiting'):
-                            self.membrane_waiting = {}
-                        self.membrane_waiting[position] = coord
-                        
-                        print(f"  🎯 Targeted void at {position} ({coord}) - registered, no growth")
-                    
+                    # Void detected
+                    if not is_reroute:  # Don't register voids from reroutes
+                        self._handle_void(position, coord)
                     self.O_matrix[pos_idx] = np.zeros(25)
-                    skipped_count += 1
                     
             except Exception as e:
                 error_msg = str(e).lower()
-                if "no such element" in error_msg or "stale" in error_msg:
-                    # Element not found - handle as void WITHOUT growth
-                    coord = self._get_coordinate_for_position(position)
-                    if coord and hasattr(self.axon_network, 'void_system'):
-                        neuron_data = {
-                            'neuron_coord': self.coordinate,
-                            'input_direction': position,
-                            'hierarchical_indices': getattr(self, 'hierarchical_indices', list(range(5))),
-                            'pattern': self.current_pattern
-                        }
-                        
-                        self.axon_network.void_system.register_void(
-                            void_coordinate=coord,
-                            neuron_id=self.id,
-                            neuron_data=neuron_data
-                        )
-                        
-                        if not hasattr(self, 'membrane_waiting'):
-                            self.membrane_waiting = {}
-                        self.membrane_waiting[position] = coord
-                    
-                    self.O_matrix[pos_idx] = np.zeros(25)
-                    skipped_count += 1
-                else:
-                    print(f"    ⚠ Targeted mode error at {position}: {e}")
-                    self.O_matrix[pos_idx] = np.zeros(25)
-                    skipped_count += 1
-        
-        # Optional logging
-        if observed_count > 0 or skipped_count > 0:
-            print(f"  🎯 Targeted: {observed_count} observed, {skipped_count} skipped/voids")
-            if hasattr(self, 'membrane_waiting') and self.membrane_waiting:
-                print(f"     Waiting for {len(self.membrane_waiting)} void reroutes")
+                if ("no such element" in error_msg or "stale" in error_msg) and not is_reroute:
+                    self._handle_void(position, coord)
+                self.O_matrix[pos_idx] = np.zeros(25)
+                
+            finally:
+                self.axon_network.unlock_coordinate(coord, self.id)
 
 
     def get_cycle_statistics(self) -> Dict:
@@ -3066,68 +3113,34 @@ class Neuron:
         # Update bias
         updated_b = eigen_matrix @ b_vector
         return self._normalize_vector(updated_b)
-
+    
     def _phase1_self_observation(self):
-        """Enhanced Phase 1 with α and γ updates for UNKNOWN"""
-        # Step 1: Collect 5×25 observation array (one row per pattern)
-        V_self = np.zeros((5, 25))
-        
-        for pattern_idx in range(5):
+        """Self observation with coordinate locking"""
+        # Our own coordinate - we should always be able to lock it
+        if self.axon_network.lock_coordinate(self.coordinate, self.id):
             try:
                 xpath = self._coord_to_xpath(self.coordinate)
                 element = self.dom_driver.find_element(By.XPATH, xpath)
                 dom_state = self._observe_element(element)
                 
                 if dom_state.get('exists', False):
-                    V_self[pattern_idx] = self._dom_state_to_observation_vector(
-                        dom_state, "self", pattern_idx, expectation_row=None
+                    self.self_vector = self._dom_state_to_observation_vector(
+                        dom_state, "self", self.current_pattern_idx, None
                     )
                 else:
-                    V_self[pattern_idx] = np.zeros(25)
-            except Exception as e:
-                V_self[pattern_idx] = np.zeros(25)
-        
-        # Store current pattern's observation
-        self.self_vector = V_self[self.current_pattern_idx]
-        
-        # Step 2: Transform ALL 5 observations together to 87D
-        T_self = self.T(V_self)  # 5×87
-        
-        # Step 3: S = T(X) where X is pattern self-expectations (5×87)
-        S = self.T(self.self_expectation_matrix)  # 5×87
-        self.S_matrix_87d = S
-        
-        # Step 4: Compute self covariance: S* = S · W_s^⊤
-        self.S_star = S @ T_self.T  # 5×5
-        
-        # Normalize
-        S_star_normalized = self.S_star.copy()
-        row_sums = S_star_normalized.sum(axis=1, keepdims=True)
-        row_sums[row_sums == 0] = 1
-        S_star_normalized = S_star_normalized / row_sums
-        
-        # Step 5: Eigen decomposition α (SELF IDENTITY)
-        self.eigen_alpha, self.eigen_alpha_v = self._compute_dominant_eigen(S_star_normalized)
-        
-        # Step 6: Update b_initial with α eigen decomposition (SELF BIAS)
-        if self.eigen_alpha_v is not None:
-            M_alpha = self.eigen_alpha * np.outer(self.eigen_alpha_v, self.eigen_alpha_v)
-            self.b_initial = self._normalize_vector(M_alpha @ self.b_initial)
-        
-        # === UNKNOWN-SPECIFIC: Apply γ update to B MATRIX ===
-        if self.current_pattern == "UNKNOWN":
-            print(f"  🔍 UNKNOWN pattern: applying γ update to B matrix")
+                    # Our own element doesn't exist? This is catastrophic
+                    print(f"  ⚠️  Our own coordinate {self.coordinate} doesn't exist!")
+                    self.self_vector = np.zeros(25)
+                    
+            finally:
+                # Always release our own coordinate
+                self.axon_network.unlock_coordinate(self.coordinate, self.id)
+        else:
+            # Should never happen, but handle gracefully
+            print(f"  ⚠️  Could not lock our own coordinate {self.coordinate}")
+            self.self_vector = np.zeros(25)
             
-            # Ensure B matrix is initialized
-            if self.B_matrix is None or np.allclose(self.B_matrix, np.ones((5,5))/5):
-                self._initialize_unknown_B_matrix()
-            
-            # Apply γ update to B matrix if not already done
-            if not self.unknown_perm_cache['b_matrix_updated']:
-                print(f"  🔧 First time UNKNOWN - applying γ to B matrix")
-                self._apply_gamma_update_to_B()
-            else:
-                print(f"  ✓ B matrix already γ-updated")
+
     
     def _build_void_aware_t_gamma_tensor(self) -> np.ndarray:
         """
@@ -3417,91 +3430,122 @@ class Neuron:
         
         return np.zeros(25)
 
-
     def _phase3_neighbor_observation(self):
-        """Observe neighbors with membrane rerouting"""
-        # Process any pending voids first
-        if hasattr(self, 'membrane_waiting') and self.membrane_waiting:
-            self.axon_network.void_system.process_voids()
+        """Observe all neighbors with void rerouting support"""
+        print(f"  🔄 Observing neighbors with void rerouting")
         
-        for pos_idx, position in enumerate(self.neighbor_positions):
-            coord = self._get_coordinate_for_position(position)
-            if not coord:
-                self.O_matrix[pos_idx] = np.zeros(25)
+        observations = {}  # position -> observation vector
+        positions_to_process = self.neighbor_positions.copy()
+        
+        # Process any pending membrane reroutes first
+        self._process_pending_reroutes()
+        
+        for position in positions_to_process:
+            # Get the coordinate to observe (original or rerouted)
+            coord_to_observe, is_reroute = self._get_coordinate_to_observe(position)
+            
+            if not coord_to_observe:
+                print(f"    ⚠ No coordinate for {position}")
+                observations[position] = np.zeros(25)
                 continue
-                
-            # Check for existing reroute
-            if hasattr(self, 'membrane_reroutes') and position in self.membrane_reroutes:
-                reroute_coord = self.membrane_reroutes[position]
-                try:
-                    obs_vector = self._observe_coordinate(reroute_coord)
-                    self.O_matrix[pos_idx] = obs_vector
-                    continue
-                except:
-                    # Reroute failed, fall through
-                    pass
-                    
-            # Check if waiting for membrane
-            if hasattr(self, 'membrane_waiting') and position in self.membrane_waiting:
-                void_coord = self.membrane_waiting[position]
-                reroute = self.axon_network.void_system.get_reroute(self.id, void_coord)
-                
-                if reroute and reroute['reroute_to']:
-                    # Reroute ready!
-                    if not hasattr(self, 'membrane_reroutes'):
-                        self.membrane_reroutes = {}
-                    self.membrane_reroutes[position] = reroute['reroute_to']
-                    del self.membrane_waiting[position]
-                    
-                    # Use the reroute
-                    try:
-                        obs_vector = self._observe_coordinate(reroute['reroute_to'])
-                        self.O_matrix[pos_idx] = obs_vector
-                        continue
-                    except:
-                        pass
-                else:
-                    # Still waiting
-                    self.O_matrix[pos_idx] = np.zeros(25)
-                    continue
-                    
-            # Normal observation or void detection
-            try:
-                xpath = self._coord_to_xpath(coord)
-                element = self.dom_driver.find_element(By.XPATH, xpath)
-                dom_state = self._observe_element(element)
-                
-                if dom_state.get('exists', False):
-                    obs_vector = self._dom_state_to_observation_vector(
-                        dom_state, position, self.current_pattern_idx,
-                        expectation_row=self.assignment.get(position)
-                    )
-                    self.O_matrix[pos_idx] = obs_vector
-                else:
-                    # Void detected
-                    self._handle_void(position, coord)
-                    self.O_matrix[pos_idx] = np.zeros(25)
-                    
-            except Exception as e:
-                error_msg = str(e).lower()
-                if "no such element" in error_msg or "stale" in error_msg:
-                    # Void detected
-                    self._handle_void(position, coord)
-                    self.O_matrix[pos_idx] = np.zeros(25)
-                else:
-                    print(f"    ✗ Error observing {position}: {e}")
-                    self.O_matrix[pos_idx] = np.zeros(25)
+            
+            # Try to observe with locking
+            obs_vector = self._try_observe_with_void_handling(position, coord_to_observe, is_reroute)
+            observations[position] = obs_vector
+        
+        # Populate O_matrix
+        for pos_idx, position in enumerate(self.neighbor_positions):
+            if position in observations:
+                self.O_matrix[pos_idx] = observations[position]
+            else:
+                self.O_matrix[pos_idx] = np.zeros(25)
+        
+        print(f"  ✅ Neighbor observation complete (with void handling)")
+        return True
+
+
+    def _is_void_or_membrane_coordinate(self, coord: Tuple, position: str) -> bool:
+        """Check if coordinate is a void or has membrane - FIXED LOGIC"""
+        if not coord:
+            return False
+        
+        # Check our void list (coordinates we know are voids)
+        if coord in self.void_coordinates:
+            return True
+        
+        # Check if we're waiting for membrane at this coordinate
+        if (hasattr(self, 'membrane_waiting') and 
+            position in self.membrane_waiting and 
+            self.membrane_waiting[position] == coord):
+            return True  # We're waiting for a reroute for this void
+        
+        # Check axon network's void system
+        if hasattr(self.axon_network, 'void_system'):
+            # Check if coordinate has a membrane (being processed)
+            if coord in self.axon_network.void_system.membranes:
+                membrane = self.axon_network.void_system.membranes[coord]
+                if membrane.port:  # Currently processing
+                    return True
+        
+        return False
+
+    def _observe_coordinate_with_locking(self, coord: Tuple, position: str) -> np.ndarray:
+        """Observe a coordinate with proper locking"""
+        # Try to lock
+        if not self.axon_network.lock_coordinate(coord, self.id):
+            # Couldn't lock - return zeros for now (will retry)
+            return np.zeros(25)
+        
+        try:
+            xpath = self._coord_to_xpath(coord)
+            element = self.dom_driver.find_element(By.XPATH, xpath)
+            dom_state = self._observe_element(element)
+            
+            if dom_state.get('exists', False):
+                obs_vector = self._dom_state_to_observation_vector(
+                    dom_state, position, self.current_pattern_idx,
+                    expectation_row=self.assignment.get(position)
+                )
+                return obs_vector
+            else:
+                # Reroute failed - it's a void too
+                return np.zeros(25)
+        except:
+            return np.zeros(25)
+        finally:
+            self.axon_network.unlock_coordinate(coord, self.id)
 
     def _handle_void(self, position, void_coordinate):
         """Handle void detection and register with membrane system"""
+        # Create neuron_data dictionary
+        neuron_data = {
+            'neuron_id': self.id,
+            'neuron_coordinate': self.coordinate,
+            'input_direction': position,
+            'pattern': self.current_pattern,
+            'hierarchical_indices': getattr(self, 'hierarchical_indices', []),
+            'confidence': self.confidence_score,
+            'cycle': self.cycle_count
+        }
+        
         # Register with void system
-        self.axon_network.void_system.register_void(
-            void_coordinate=void_coordinate,
-            neuron_id=self.id,
-            neuron_data=neuron_data
-        )
+        if hasattr(self.axon_network, 'void_system'):
+            self.axon_network.void_system.register_void(
+                void_coordinate=void_coordinate,
+                neuron_id=self.id,
+                neuron_data=neuron_data
+            )
+        
 
+        self.membrane_waiting[position] = void_coordinate
+        print(f"  ⏳ Added {position} to membrane_waiting for void at {void_coordinate}")
 
+        
+        # Also mark as void locally
+        if void_coordinate not in self.void_coordinates:
+            self.void_coordinates.add(void_coordinate)
+            print(f"  🌀 Neuron {self.id} registered void at {position}: {void_coordinate}")
+            
     def _register_with_membrane(self, void_coordinate: Tuple[int, ...], position: str):
         """Register this neuron with a membrane for rerouting"""
         # Get hierarchical indices from phase 2
@@ -3978,6 +4022,7 @@ class Neuron:
     
     def _generate_id(self) -> str:
         return f"neuron_{hashlib.md5(str(self.coordinate).encode()).hexdigest()[:8]}"
+
     
     def _coord_to_xpath(self, coord: Tuple[int, ...]) -> str:
         """Convert coordinate to XPath"""
@@ -3991,35 +4036,37 @@ class Neuron:
         for idx in coord[1:]:
             xpath += f"/*[{idx + 1}]"
         return xpath
-    
+
     def _get_coordinate_for_position(self, position: str) -> Optional[Tuple[int, ...]]:
-        """Get coordinate for neighbor position"""
+        """Get coordinate for neighbor position - CLEAN FIX"""
         if not self.coordinate:
             return None
         
-        coord = list(self.coordinate)
+        coord = list(self.coordinate)  # Fresh copy
         
-        if position == "parent" and len(coord) > 1:
+        if position == "self":
+            return tuple(coord)  # ===== ADDED =====
+        elif position == "parent" and len(coord) > 1:
             return tuple(coord[:-1])
         elif position == "up" and len(coord) > 0:
-            new_coord = coord.copy()
-            new_coord[-1] = max(0, new_coord[-1] - 1)
-            return tuple(new_coord)
+            if coord[-1] > 0:
+                coord[-1] -= 1
+                return tuple(coord)
+            return None  # No previous sibling
         elif position == "down":
-            new_coord = coord.copy()
-            new_coord[-1] += 1
-            return tuple(new_coord)
+            coord[-1] += 1
+            return tuple(coord)
         elif position == "left" and len(coord) > 1:
-            new_coord = coord.copy()
-            new_coord[-2] = max(0, new_coord[-2] - 1)
-            return tuple(new_coord)
+            if coord[-2] > 0:
+                coord[-2] -= 1
+                return tuple(coord)
+            return None  # No left neighbor
         elif position == "right" and len(coord) > 1:
-            new_coord = coord.copy()
-            new_coord[-2] += 1
-            return tuple(new_coord)
+            coord[-2] += 1
+            return tuple(coord)
         
         return None
-    
+
     def _permute_position_order(self):
         """Permute neighbor position order for recycling"""
         if self.permutation_count < self.max_permutations:
@@ -4230,42 +4277,74 @@ class Neuron:
         })
 
     def process_cycle(self) -> bool:
-        """Main processing cycle with clean α/γ flow and membrane awareness"""
+        """Main processing cycle - ALWAYS completes"""
         self.cycle_count += 1
         
         print(f"\n🧠 Neuron {self.id} Cycle {self.cycle_count} [{self.current_pattern}]")
         
-        # Show membrane status
-        if hasattr(self, 'membrane_waiting') and self.membrane_waiting:
-            print(f"  ⏳ Waiting for {len(self.membrane_waiting)} membrane reroutes: {list(self.membrane_waiting.keys())}")
-        if hasattr(self, 'membrane_reroutes') and self.membrane_reroutes:
-            print(f"  ✅ Using {len(self.membrane_reroutes)} active reroutes: {list(self.membrane_reroutes.keys())}")
+        # Reset stalled state if any
+        if self.stalled:
+            print(f"  ⏸️  Resuming from stall state")
+            self.stalled = False
         
-        # Special logging for UNKNOWN
-        if self.current_pattern == "UNKNOWN":
-            print(f"  📊 Current eigen history: {self.unknown_perm_cache['cycle_history']}")
-            print(f"  📈 b_initial (α): {[f'{x:.3f}' for x in self.b_initial]}")
-            print(f"  🎯 B matrix trace (γ): {np.trace(self.B_matrix):.3f}")
+        # Phase 1: Self observation
+        self._phase1_self_observation()
         
-        # Execute phases with clean flow
-        self._phase1_self_observation()  # α update, γ update for B matrix
+        # Phase 2: Competitive assignment
+        self._phase2_competitive_assignment()
         
-        self._phase2_competitive_assignment()  # Uses γ-updated B matrix
-        self._phase3_neighbor_observation() if self.learning_mode != "TARGETED" else self._phase3_targeted_observation()
-        self._phase4_matrix_updates()  # β update
+        # Phase 3: Neighbor observation WITH void handling
+        try:
+            if self.learning_mode == "TARGETED":
+                self._phase3_targeted_observation_with_locking()
+            else:
+                self._phase3_neighbor_observation()  # Uses new method with reroutes
+        except Exception as e:
+            print(f"  ⚠ Neighbor observation error: {e}")
+            # Continue with zeros for failed observations
         
-        # Confidence decision
+        # Phase 4: Matrix updates (use whatever observations we have)
+        self._phase4_matrix_updates()
+        
+        # Phase 5: Confidence decision
         decision = self._phase5_confidence_decision()
         
         if decision == "TENSOR_FALLBACK":
-            pattern_changed = self._phase5_tensor_fallback()  # ζ update
+            pattern_changed = self._phase5_tensor_fallback()
             if pattern_changed:
                 self._phase6_cycle_completion()
                 return True
         
+        # Always complete the cycle
         self._phase6_cycle_completion()
         return True
 
+    def cleanup_locks(self):
+        """Release any locks this neuron holds"""
+        if hasattr(self.axon_network, 'coordinate_states'):
+            # Find and remove all locks held by this neuron
+            coordinates_to_remove = []
+            for coord, state in self.axon_network.coordinate_states.items():
+                if state['locked_by'] == self.id:
+                    coordinates_to_remove.append(coord)
+            
+            for coord in coordinates_to_remove:
+                del self.axon_network.coordinate_states[coord]
+    def cleanup(self):
+        """Clean up neuron resources"""
+        # Release all locks
+        self.cleanup_locks()
+        
+        # Clear pending coordinates
+        self.pending_coordinates.clear()
+        self.stalled_positions.clear()
+        
+        # Notify void system we're gone
+        if hasattr(self.axon_network, 'void_system'):
+            # Remove any membrane connections for this neuron
+            for void_coord, membrane in self.axon_network.void_system.membranes.items():
+                if self.id in membrane.connections:
+                    del membrane.connections[self.id]
 
 # ===== PUBLIC METHODS FOR NEXUS =====
    
@@ -4329,6 +4408,8 @@ class AxonNetwork:
         self.session_start_time = session_start_time or time.time()
         self.neuron_registry = {}  # neuron_id -> weakref to neuron
         self.void_system = VoidSystem(self)
+        self.coordinate_locks = {}  # coordinate -> {'locked_by': neuron_id, 'locked_at': timestamp}
+        self.coordinate_lock_timeout = 1.0
         # Axon type definitions - UPDATE THIS
         self.axon_definitions = {
             'NEURON_CREATED': {'nexus': False, 'broadcast': True},
@@ -4366,7 +4447,101 @@ class AxonNetwork:
         self.test_node_suggestions = []
         self.active_test_nodes = {}
         self.neuron_registry = {}
+        self.neuron_objects = {} #id ref 
         self.sent_flags = {}
+    
+    # ===== Public reporting access ===== 
+
+    def dump_current_state(self, frames_dir: str, frame_number: int):
+        """
+        SIMPLY dump current state from queues.
+        Called by Nexus periodically.
+        """
+        # 1. Create frames directory if it doesn't exist
+        os.makedirs(frames_dir, exist_ok=True)
+        
+        # 2. DIRECT ACCESS TO QUEUES - that's all we need
+        frame_data = {
+            'frame': frame_number,
+            'timestamp': time.time(),
+            'session_time': time.time() - self.session_start_time,
+            
+            # ===== SIMPLY COPY WHAT'S IN THE QUEUES =====
+            'neurons': self._extract_neurons_from_circuitry(),
+            'axons': self._extract_axons_from_queues(),
+            'system_events': list(self.queues['NEXUS'])[-20:],  # Last 20
+            'circuitry_summary': self.get_all_circuitry_summary(),
+            
+            # Stats are already computed in get_all_circuitry_summary()
+            'system_stats': self.get_queue_snapshots()
+        }
+        
+        # 3. Save to file
+        filename = f"frame_{frame_number:06d}.json"
+        filepath = os.path.join(frames_dir, filename)
+        
+        with open(filepath, 'w') as f:
+            json.dump(frame_data, f, indent=2)
+        
+        print(f"📊 Frame {frame_number}: {len(frame_data['neurons'])} neurons from CIRCUITRY queue")
+        
+        return frame_number + 1
+    
+    def _extract_neurons_from_circuitry(self):
+        """JUST extract neuron states from CIRCUITRY queue"""
+        neurons = []
+        
+        for neuron_id, circuitry in self.queues['CIRCUITRY'].items():
+            if circuitry['matrix_history']:
+                latest = circuitry['matrix_history'][-1]
+                
+                # Get coordinate from registry
+                coord = None
+                for c, info in self.neuron_registry.items():
+                    if info.get('id') == neuron_id:
+                        coord = c
+                        break
+                
+                if coord:
+                    neuron = {
+                        'neuron_id': neuron_id,
+                        'coordinate': list(coord) if isinstance(coord, tuple) else coord,
+                        'pattern': circuitry['pattern'],
+                        'confidence': latest['confidence'],
+                        'b_vector': latest['b_vector'],
+                        'B_matrix_diag': latest['B_matrix_diag'],
+                        'dot_products': latest['dot_products'],
+                        'assignment': latest['assignment'],
+                        'cycle': latest['cycle']
+                    }
+                    neurons.append(neuron)
+        
+        return neurons
+    
+    def _extract_axons_from_queues(self):
+        """JUST extract recent axons from all pattern queues"""
+        axons = []
+        recent_time = time.time() - 2.0  # Last 2 seconds
+        
+        # Check all pattern queues
+        for pattern in ['DATA_INPUT', 'ACTION_ELEMENT', 'CONTEXT_ELEMENT', 
+                       'STRUCTURAL', 'UNKNOWN']:
+            queue = self.queues[pattern]
+            for neuron_id, axon_list in queue.items():
+                if axon_list:
+                    # Get most recent axon
+                    latest_axon = axon_list[-1]
+                    axon_time = self.session_start_time + latest_axon.get('session_time', 0)
+                    
+                    if axon_time >= recent_time:
+                        axons.append(latest_axon)
+        
+        # Also get system axons
+        for axon in list(self.queues['NEXUS'])[-10:]:
+            axons.append(axon)
+        
+        return axons
+    
     # ===== MAIN AXON FIRING METHOD =====
     
     def has_flag_been_sent(self, coordinate: Tuple, flag_type: str, timeout: float = 5.0) -> bool:
@@ -4381,6 +4556,45 @@ class AxonNetwork:
                 del self.sent_flags[key]
         return False
 
+
+    def lock_coordinate(self, coordinate: Tuple, neuron_id: str) -> bool:
+        """Simple coordinate locking - returns True if lock acquired"""
+        if coordinate in self.coordinate_locks:
+            # Check if lock expired
+            lock_time = self.coordinate_locks[coordinate][1]
+            if time.time() - lock_time > self.coordinate_lock_timeout:
+                # Lock expired, take it
+                self.coordinate_locks[coordinate] = (neuron_id, time.time())
+                return True
+            return False  # Still locked by someone else
+        
+        # Coordinate free, lock it
+        self.coordinate_locks[coordinate] = (neuron_id, time.time())
+        return True
+
+    def unlock_coordinate(self, coordinate: Tuple, neuron_id: str):
+        """Release coordinate lock"""
+        if coordinate in self.coordinate_locks:
+            if self.coordinate_locks[coordinate][0] == neuron_id:
+                del self.coordinate_locks[coordinate]
+
+    def is_coordinate_locked(self, coordinate: Tuple, exclude_neuron: str = None) -> bool:
+        """Check if coordinate is locked (optionally excluding specific neuron)"""
+        if coordinate not in self.coordinate_locks:
+            return False
+        
+        # Check timeout
+        lock_time = self.coordinate_locks[coordinate][1]
+        if time.time() - lock_time > self.coordinate_lock_timeout:
+            del self.coordinate_locks[coordinate]
+            return False
+        
+        # Check if we should exclude ourselves
+        if exclude_neuron and self.coordinate_locks[coordinate][0] == exclude_neuron:
+            return False
+        
+        return True
+        
     # Add method to record flag
     def record_flag_sent(self, coordinate: Tuple, flag_type: str):
         """Record that a flag was sent for this coordinate"""
@@ -4461,6 +4675,35 @@ class AxonNetwork:
         
         return axon['axon_id']
     
+    def is_coordinate_currently_observed(self, coordinate: Tuple) -> bool:
+        """Check if coordinate is being observed RIGHT NOW by checking pattern queues"""
+        if not coordinate:
+            return False
+        
+        current_time = time.time()
+        
+        # Check all pattern queues for VERY recent activity
+        for pattern in ['DATA_INPUT', 'ACTION_ELEMENT', 'CONTEXT_ELEMENT', 
+                    'STRUCTURAL', 'UNKNOWN']:
+            for neuron_id, axons in self.queues[pattern].items():
+                if axons:  # Has axons
+                    last_axon = axons[-1]  # Most recent axon
+                    
+                    # Check if this axon is about this coordinate AND very recent
+                    axon_data = last_axon.get('data', {})
+                    axon_coord = axon_data.get('coordinate')
+                    
+                    # Also check source coordinate
+                    source_coord = last_axon.get('source', {}).get('coordinate')
+                    
+                    if (axon_coord == coordinate or source_coord == coordinate):
+                        # Check recency (within last 0.5 seconds)
+                        axon_time = self.session_start_time + last_axon['session_time']
+                        if current_time - axon_time < 0.5:
+                            return True
+        
+        return False
+
     def _handle_circuitry_update(self, axon: Dict, source_neuron):
         """Handle circuitry updates - continuous matrix history"""
         neuron_id = source_neuron.id
@@ -4589,13 +4832,8 @@ class AxonNetwork:
                 if pattern in self.queues:
                     # This will be picked up by neurons when they check their queues
                     pass
-    
-    def get_neuron_by_coordinate(self, coordinate: Tuple[int, ...]) -> Optional[Dict]:
-        return self.neuron_registry.get(coordinate)
-    
-    def get_all_neuron_coordinates(self) -> List[Tuple[int, ...]]:
-        return list(self.neuron_registry.keys())
-    
+
+
     def get_axon_log_for_neuron(self, neuron_id: str, pattern_filter: str = None) -> List[Dict]:
         """Get axon history for specific neuron (compatible with existing calls)"""
         neuron_axons = []
@@ -4612,19 +4850,39 @@ class AxonNetwork:
         
         return sorted(neuron_axons, key=lambda x: x['session_time'])
     
-    def register_neuron(self, neuron, neighbor_info: Dict = None):
-        """Register neuron in network"""
-        session_time = time.time() - self.session_start_time
+    def get_neuron(self, neuron_id: str):
+            """Get neuron object by ID"""
+            return self.neuron_objects.get(neuron_id)
         
-        self.neuron_registry[neuron.coordinate] = {
-            'id': neuron.id,
-            'pattern': neuron.current_pattern,
-            'state': getattr(neuron, 'state', 'DEFAULT').value if hasattr(neuron, 'state') else 'UNKNOWN',
-            'neighbors': neighbor_info or {},
-            'registered_at': session_time,
-            'last_axon_at': session_time
-        }
-    
+    # Also add cleanup when neuron is removed
+    def remove_neuron(self, neuron_id: str):
+        """Remove neuron from network"""
+        # Remove from neuron_objects
+        if neuron_id in self.neuron_objects:
+            del self.neuron_objects[neuron_id]
+        
+        # Remove from registry
+        for coord, data in list(self.neuron_registry.items()):
+            if data.get('id') == neuron_id:
+                del self.neuron_registry[coord]
+                break
+
+    def register_neuron(self, neuron, neighbor_info: Dict = None):
+            """Register neuron in network"""
+            session_time = time.time() - self.session_start_time
+            
+            self.neuron_registry[neuron.coordinate] = {
+                'id': neuron.id,
+                'pattern': neuron.current_pattern,
+                'state': getattr(neuron, 'state', 'DEFAULT').value if hasattr(neuron, 'state') else 'UNKNOWN',
+                'neighbors': neighbor_info or {},
+                'registered_at': session_time,
+                'last_axon_at': session_time
+            }
+            
+            self.neuron_objects[neuron.id] = neuron
+        
+
     def _update_neuron_registry(self, neuron, session_time: float):
         """Update neuron's last activity time"""
         if neuron and neuron.coordinate in self.neuron_registry:
