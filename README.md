@@ -12,13 +12,13 @@ Each neuron operates at specific DOM coordinates and uses mathematical workflows
 
 ## 🧩 Pattern Types
 
-| Pattern | Description |
-|---------|-------------|
-| **DATA_INPUT** | Input elements (text fields, checkboxes) |
-| **ACTION_ELEMENT** | Interactive elements (buttons, links) |
+| Pattern        |              Description                       |
+|-----------------------------------------------------------------|
+| **DATA_INPUT** | Input elements (text fields, checkboxes)       |
+| **ACTION_ELEMENT** | Interactive elements (buttons, links)      |
 | **CONTEXT_ELEMENT** | Structural elements (headers, containers) |
-| **STRUCTURAL** | Layout elements (divs, spans) |
-| **UNKNOWN** | Fallback pattern with special eigen workflow |
+| **STRUCTURAL** | Layout elements (divs, spans)                  |
+| **UNKNOWN** | Fallback pattern with special eigen workflow      |
 
 ## 🧮 Core Mathematics
 
@@ -143,19 +143,17 @@ neuron.configure_void_handling(
 | T-transformation | O(n×225) | n ≤ 5 vectors |
 | Eigen decomposition | O(125) | Constant (5×5 matrices) |
 | Void search | O(4×d²) | d = search depth |
+*Note - Nexus system allows exact user selection of DOM space needed, which comes prescanned 
 
-**Memory:**
-- Expectation tensors: ~6KB
-- T-transformed: ~21KB
-- Matrix storage: ~2KB
 
 ## 📚 Documentation
 
 **[Download Full PDF Documentation](paper.pdf)** - Complete mathematical specification including:
 - Phase-by-phase workflow (0-5b)
-- Normalization operations
+- Covariance workflow 
 - Competitive assignment algorithm
 - Tensor fallback mechanism
+- "Rigor" (aka Poincare carry) 
 
 ## 🧪 Testing
 ```bash
